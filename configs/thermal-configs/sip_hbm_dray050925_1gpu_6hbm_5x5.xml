@@ -7,7 +7,7 @@
     x_location=""
     y_location=""
     
-    core_area="44000"
+    core_area="50000"
     fraction_memory="0.0"
     fraction_logic="0.0"
     fraction_analog="1.0"
@@ -37,7 +37,7 @@
         x_location=""
         y_location=""
         
-        core_area="44000"
+        core_area="50000"
         fraction_memory="0.0"
         fraction_logic="0.0"
         fraction_analog="1.0"
@@ -179,7 +179,7 @@
                     buried="False"
                     assembly_process="organic_simultaneous_bonding"
                     test_process="test_process_0"
-                    stackup="1:5nm_HBM2HBM_metal,1:5nm_HBM2interposer_bonding"
+                    stackup="1:5nm_HBM2HBM_metal,1:5nm_HBM_active"
                     wafer_process="process_1"
                     v_rail="5,1.8"
                     reg_eff="1.0,0.9"
