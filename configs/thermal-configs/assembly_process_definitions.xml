@@ -75,6 +75,7 @@
 <assembly_processes>
     <assembly name="organic_25_simultaneous_bonding" 
         materials_cost_per_mm2="0.1"
+        bb_cost_per_second=""
         picknplace_machine_cost="800000"
         picknplace_machine_lifetime="5"
         picknplace_machine_uptime="0.9"
@@ -97,6 +98,7 @@
     </assembly>
     <assembly name="organic_55_simultaneous_bonding" 
         materials_cost_per_mm2="0.1"
+        bb_cost_per_second=""
         picknplace_machine_cost="1000000"
         picknplace_machine_lifetime="5"
         picknplace_machine_uptime="0.9"
@@ -119,6 +121,7 @@
     </assembly>
     <assembly name="organic_simultaneous_bonding" 
         materials_cost_per_mm2="0.1"
+        bb_cost_per_second=""
         picknplace_machine_cost="600000"
         picknplace_machine_lifetime="5"
         picknplace_machine_uptime="0.9"
@@ -139,8 +142,32 @@
         bonding_yield="0.999999"
         dielectric_bond_defect_density="0.0">
     </assembly>
+    <assembly name="HBM_organic_simultaneous_bonding" 
+        materials_cost_per_mm2="0.1"
+        bb_cost_per_second=""
+        picknplace_machine_cost="600000"
+        picknplace_machine_lifetime="5"
+        picknplace_machine_uptime="0.9"
+        picknplace_technician_yearly_cost="100000"
+        picknplace_time="10"
+        picknplace_group="1"
+        bonding_machine_cost="200000"
+        bonding_machine_lifetime="5"
+        bonding_machine_uptime="0.9"
+        bonding_technician_yearly_cost="100000"
+        bonding_time="20"
+        bonding_group="10"
+        die_separation="0.000"
+        edge_exclusion="0.000"
+        max_pad_current_density="100.0"
+        bonding_pitch="0.045"
+        alignment_yield="0.999"
+        bonding_yield="0.999999"
+        dielectric_bond_defect_density="0.0">
+    </assembly>
     <!-- Note on parameters. 
         materials_cost_per_mm2 is set arbitrarily, need a source
+        bb_cost_per_second=""
         machine_cost numbers are set based on discussions with Professor Iyer and Krutikesh
         machine_lifetime and machine_uptime are set to arbitrary numbers that make some sense
         picknplace_time and bonding_time are set based on discussions with Krutikesh
@@ -154,6 +181,7 @@
         -->
     <assembly name="silicon_45_individual_bonding" 
         materials_cost_per_mm2="0.1"
+        bb_cost_per_second=""
         picknplace_machine_cost="500000"
         picknplace_machine_lifetime="5"
         picknplace_machine_uptime="0.9"
@@ -176,6 +204,7 @@
     </assembly>
     <assembly name="silicon_individual_bonding" 
         materials_cost_per_mm2="0.1"
+        bb_cost_per_second=""
         picknplace_machine_cost="1800000"
         picknplace_machine_lifetime="5"
         picknplace_machine_uptime="0.9"
@@ -198,6 +227,7 @@
     </assembly>
     <!-- Note on parameters. 
         materials_cost_per_mm2 is set arbitrarily, need a source
+        bb_cost_per_second=""
         machine_cost numbers are set based on discussions with Professor Iyer and Krutikesh
         machine_lifetime and machine_uptime are set to arbitrary numbers that make some sense
         picknplace_time and bonding_time are set based on discussions with Krutikesh
@@ -211,6 +241,7 @@
         -->
     <assembly name="w2w_hybrid_bonding" 
         materials_cost_per_mm2="0.1"
+        bb_cost_per_second=""
         picknplace_machine_cost="1000000"
         picknplace_machine_lifetime="5"
         picknplace_machine_uptime="0.9"
@@ -236,6 +267,7 @@
         -->
     <assembly name="dummy_assembly_process" 
         materials_cost_per_mm2="0.0"
+        bb_cost_per_second=""
         picknplace_machine_cost="0"
         picknplace_machine_lifetime="1"
         picknplace_machine_uptime="1.0"
