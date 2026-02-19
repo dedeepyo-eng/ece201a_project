@@ -124,7 +124,7 @@ class Box():
 
     def __str__(self):
         # add print for all 3d coords
-        return "Box: " + self.name + " at (" + str(round(self.start_x, 2)) + "," + str(round(self.start_y, 2)) + "," + str(round(self.start_z, 2)) + ") with width " + str(round(self.width, 2)) + " and length " + str(round(self.length, 2)) + " and height " + str(round(self.height, 2))
+        return "Box: " + self.name + " at (" + str(round(self.start_x, 3)) + "," + str(round(self.start_y, 3)) + "," + str(round(self.start_z, 3)) + ") with width " + str(round(self.width, 3)) + " and length " + str(round(self.length, 3)) + " and height " + str(round(self.height, 3))
     
     def __repr__(self):
         return self.__str__()

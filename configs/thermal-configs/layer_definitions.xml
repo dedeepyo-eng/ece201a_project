@@ -331,7 +331,7 @@
         nre_mask_cost="0"
         stitching_yield="1.0"
         thickness="0.005"
-        material="Cu-Foil:0.5,Si:0.5">
+        material="Cu-Foil:0.02,EpAg:0.98">
     </layer>
     <layer name="5nm_HBM_active"
         active="True"
@@ -344,7 +344,7 @@
         nre_mask_cost="500000"
         stitching_yield="1.0"
         thickness="0.03"
-        material="Cu-Foil:0.1,Si:0.9">
+        material="Cu-Foil:0.05,Si:0.95">
     </layer>
     <layer name="5nm_HBM_active_top"
         active="True"
@@ -357,7 +357,7 @@
         nre_mask_cost="500000"
         stitching_yield="1.0"
         thickness="0.41"
-        material="Cu-Foil:0.1,Si:0.9">
+        material="Cu-Foil:0.05,Si:0.95">
     </layer>
     <layer name="5nm_HBM2interposer_bonding"
         active="True"
@@ -383,7 +383,7 @@
         litho_percent="0.27"
         nre_mask_cost="1000000"
         stitching_yield="1.0"
-        thickness="0.54"
+        thickness="0.7"
         material="Si">
     </layer>
     <layer name="5nm_GPU_metal"
@@ -396,8 +396,8 @@
         litho_percent="0.0"
         nre_mask_cost="0"
         stitching_yield="1.0"
-        thickness="0.02"
-        material="Cu-Foil:0.4,SiO2:0.6">
+        thickness="0.001"
+        material="Cu-Foil:0.25,SiO2:0.75">
     </layer>
     <layer name="substrate_TSV"
         active="True"
@@ -435,8 +435,99 @@
         litho_percent="0.27"
         nre_mask_cost="1000000"
         stitching_yield="1.0"
-        thickness="0.19"
+        thickness="0.09"
         material="Si">
     </layer>
+    <!--- We need a layer with zero thickness for fake chiplets. -->
+    <layer name="fake_layer"
+        active="False"
+        cost_per_mm2="0.0"
+        defect_density="0.0"
+        critical_area_ratio="0.0"
+        clustering_factor="2"
+        transistor_density="0"
+        litho_percent="0.0"
+        nre_mask_cost="0"
+        stitching_yield="1.0"
+        thickness="0.0"
+        material="Si">
+    </layer>
+    <layer name="5nm_GPU_active_3D_12stack"
+        active="True"
+        cost_per_mm2="0.132219"
+        defect_density="0.005"
+        critical_area_ratio="0.6"
+        clustering_factor="2"
+        transistor_density="0"
+        litho_percent="0.27"
+        nre_mask_cost="1000000"
+        stitching_yield="1.0"
+        thickness="0.09"
+        material="Si">
+    </layer>
+    <layer name="5nm_HBM_active_top_3D_8high"
+        active="True"
+        cost_per_mm2="0.084769"
+        defect_density="0.005"
+        critical_area_ratio="0.1"
+        clustering_factor="2"
+        transistor_density="0"
+        litho_percent="0.25"
+        nre_mask_cost="500000"
+        stitching_yield="1.0"
+        thickness="0.31"
+        material="Cu-Foil:0.05,Si:0.95">
+    </layer>
+    <layer name="5nm_HBM_active_top_2p5D_16high"
+        active="True"
+        cost_per_mm2="0.084769"
+        defect_density="0.005"
+        critical_area_ratio="0.3"
+        clustering_factor="2"
+        transistor_density="0"
+        litho_percent="0.25"
+        nre_mask_cost="500000"
+        stitching_yield="1.0"
+        thickness="0.13"
+        material="Cu-Foil:0.05,Si:0.95">
+    </layer>
+    <layer name="dummySi_HBM"
+        active="False"
+        cost_per_mm2="0.0001"
+        defect_density="0.0"
+        critical_area_ratio="0.0"
+        clustering_factor="2"
+        transistor_density="0"
+        litho_percent="0.0"
+        nre_mask_cost="0"
+        stitching_yield="1.0"
+        thickness="0.63"
+        material="Si">
+    </layer>
+    <layer name="5nm_HBM_active_top_3D_16high"
+        active="True"
+        cost_per_mm2="0.084769"
+        defect_density="0.005"
+        critical_area_ratio="0.3"
+        clustering_factor="2"
+        transistor_density="0"
+        litho_percent="0.25"
+        nre_mask_cost="500000"
+        stitching_yield="1.0"
+        thickness="0.03"
+        material="Cu-Foil:0.05,Si:0.95">
+    </layer>
 </layers>
-<!--- 5nm_global_metal_3D -->
+<!-- <layer name="5nm_HBM_active_top_3D_16high"
+        active="True"
+        cost_per_mm2="0.084769"
+        defect_density="0.005"
+        critical_area_ratio="0.1"
+        clustering_factor="2"
+        transistor_density="0"
+        litho_percent="0.25"
+        nre_mask_cost="500000"
+        stitching_yield="1.0"
+        thickness="0.05"
+        material="Cu-Foil:0.1,Si:0.9">
+    </layer> -->

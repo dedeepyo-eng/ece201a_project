@@ -861,7 +861,9 @@ def chiplet_definiton_list_from_file(file, variable_dict):
         # dedeepyo : 18-Nov-2024 : Added fake attribute
         # We need to raise Warning if the chiplet is fake and it contains non-empty values for core_area and stackup attributes.
         # first check if core_area begins with $
-        core_area = attrib_variable_handling(attributes["core_area"], variable_dict)    
+        core_area = attrib_variable_handling(attributes["core_area"], variable_dict)
+        if(core_area == 0.0):
+            core_area = attrib_variable_handling(attributes["bb_area"], variable_dict) 
         if(attributes["fake"].strip() == "True"):
             chiplet.set_fake(True)
             if core_area != 0.0:
@@ -1377,7 +1379,7 @@ def parse_all_chiplets(file):
                         if layer.get_name() == layer_name:
                             height += (int(layer_num) * layer.get_thickness())
 
-                height = round(height, 2)
+                height = round(height, 3) #CHECK: 3 decimal places. 
                 chiplet.set_height(height)
             # dedeepyo : 18-Nov-2024
 
@@ -1510,7 +1512,8 @@ def recursively_find_fakes(root, file = None):
 if __name__ == "__main__":
     # test code
     # root = parse_all_chiplets("configs/thermal-configs/sip_hbm.xml")
-    root = parse_all_chiplets("configs/thermal-configs/sip_hbm_dray_hbm_4side_64gpu.xml")
+    # root = parse_all_chiplets("configs/thermal-configs/sip_hbm_dray_hbm_4side_64gpu.xml")
+    root = parse_all_chiplets("/app/nanocad/projects/deepflow_thermal/DeepFlow/configs/thermal-configs/sip_hbm_dray062325_1gpu_6hbm_2p5D.xml")
     # root = parse_all_chiplets("/app/nanocad/projects/deepflow_thermal/DeepFlow/configs/thermal-configs/sip_hbm_dray_l2_gpu_hbm.xml")
     # root = parse_all_chiplets("/app/nanocad/projects/deepflow_thermal/DeepFlow/configs/thermal-configs/sip_hbm_dray_hbm_top_gpu.xml")
     # f = open("output/chiplet_tree.txt", "w")

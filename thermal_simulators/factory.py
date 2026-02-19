@@ -3,9 +3,9 @@ from .neural_sim import NeuralModelSim
 
 class SimulatorFactory:
     @staticmethod
-    def get_simulator(type):
+    def get_simulator(type, name):
         if type == 'Anemoi':
-            return AnemoiSim()
+            return AnemoiSim(name = name)
         elif type == 'NeuralModel':
             return NeuralModelSim()
         else:

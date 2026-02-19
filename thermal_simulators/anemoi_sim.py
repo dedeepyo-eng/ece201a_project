@@ -20,9 +20,14 @@ conductivity_values = {
     "TIM": 100,
     "SnPb 67/37": 36,
     "Epoxy, Silver filled": 1.6,
-    "SiO2": 1.1
+    "SiO2": 1.1,
+    "AlN": 237,
+    "EpAg": 1.6,
+    "Infill_material": 19,
+    "Polymer1": 675,
+    "TIM0p5": 1.0 # 0.5 # 100.0 # 
 }
-
+# EpAg is Epoxy, Silver filled used in layer_definitions.xml for bonding layers 5nm_HBM2HBM_metal.
 anemoi_parameters = {
     "GPU" : "GPU_power",
     "HBM" : "HBM_power",
@@ -30,7 +35,9 @@ anemoi_parameters = {
     "interposer" : "interposer_power",
     "substrate" : "substrate_power",
     "PCB" : "PCB_power",
-    "Power_Source" : "Power_Source_power"
+    "Power_Source" : "Power_Source_power",
+    "GPU_HTC" : "GPU_HTC_power", # Actually HTC but used as a parameter, same for HBM_HTC
+    "HBM_HTC" : "HBM_HTC_power",
 }
 # anemoi_parameter_ID = {
 #     "GPU_power" : 67001,
@@ -49,8 +56,11 @@ power_values = {
     "interposer" : 0.0,
     "substrate" : 0.0,
     "PCB" : 0.0,
-    "Power_Source" : 0.0
+    "Power_Source" : 0.0,
+    "GPU_HTC" : 10000.0, # HTC values in W / (m^2 * K)
+    "HBM_HTC" : 10000.0, # HTC values in W / (m^2 * K)
 } # power values in mW
+#TODO: Send HTC values in kw / (m^2 * K)
 
 def get_key(val,dict):
     for key, value in dict.items():
@@ -59,14 +69,14 @@ def get_key(val,dict):
     raise Exception("Key not found")
 
 # dedeepyo : 16-Dec-24 : Maintaining list of projects #
-# Current : TechCon_050925_2p5D, TechCon_051025_3D, TechCon_050925_2p5D, TechCon_iteration_3D, TechCon_iteration_3D1, TechCon_iteration_2p5D
+# Current : TechCon_dray2_2p5D_1GPU_6HBM_062325, TechCon_dray1_2p5D_1GPU_6HBM_062325, TechCon_dray2p5D_1GPU_6HBM_062325, TechCon_2p5D_1GPU_6HBM_062325, TechCon_2p5D_1GPU_6HBM_062325, TechCon_iterate1_3D_062125, TechCon_iterate_3D_062125, TechCon_050925_2p5D, TechCon_051025_3D, TechCon_050925_2p5D, TechCon_iteration_3D, TechCon_iteration_3D1, TechCon_iteration_2p5D, TechCon_calibrate_3D, TECHCON_050925_2P5D_iteration, TechCon_2p5D_iteration_062125, TechCon_iteration_2p5D, TechCon_calibrate_3D_062125
 # Past : 11-Nov-24 to 12-Feb-25 : Dummy_1122, Dummy, Dummy2_dray_1109, Dummy_121624, Dummy_121824, Dummy_122024, Dummy_010825, Dummy_010925, Dummy1_010925, Dummy2_010925, Dummy_121624, Dummy_012725, Dummy_012825, Dummy_012925, Dummy_013025, Dummy_013125, Dummy2_013125, Dummy3_013125, Dumm_020525, Dummy_020725, Dummy_021125, Dummy1_021125, Dummy2_021125
 # 12-Feb-25 to 2-Mar-25 : Dummy_64HBM_top_of_GPU_021225, Dummy1_021225, Dummy_HBM_4side_64GPU_021225, Dummy1_64HBM_top_of_GPU_021225, Dummy_HBM_top_1GPU_021425, Dummy_4HBM_top_64GPU_021425, Dummy_4HBM_64GPU_021525, Dummy_4HBM_1GPU_021525, Dummy_4HBM_64GPU_021825, Dummy_021825_1GPU_4HBM_dray, Dummy_022525_dray1, Dummy_022525_dray2, Dummy_022525_dray3, GPU4x4_6HBM_022725, A100_GPU4x4_6HBM_022725, A100_GPU4x4_6HBM_022725_dray3, A100_GPU_6HBM_top_022725_dray4
 # 3-Mar-25 to present : Dual_sided_PCB_A100_4x4GPU_6HBM_top_030325_dray, Dual_sided_PCB_A100_GPU_6HBM_top_030325_dray, Dual_sided_PCB_A100_GPU_6HBM_top_030325_dray2, Dual_sided_PCB_A100_GPU_6HBM_top_030325_dray2, Test_dray2_9Apr25, TechCon_050925_2p5D, TechCon_051025_3D
 # dedeepyo : 14-Dec-24
 
 class AnemoiSim(ThermalSimulator):
-    def __init__(self,name = "TechCon_iteration_3D1"):
+    def __init__(self, name = "TechCon_dray4_2p5D_062325_5x5"):
         cfg = danka_thermal_api.Configuration(
             host='https://anemoisoftware.com/api',
             api_key={
@@ -151,7 +161,24 @@ class AnemoiSim(ThermalSimulator):
         for mat in all_materials:
             if mat.name in material_name_list:
                 self.papi.project_material_create(self.id, [mat])
-    # dedeepyo : 7-Feb-25
+        all_material_names = [mat.name for mat in all_materials]
+        for key, value in conductivity_values.items():
+            if key not in all_material_names:
+                mat = danka_thermal_api.Material(name = key, conductivity = str(value), conductivity_y = str(value), conductivity_z = str(value), color = "#456d82", anisotropic = False)
+                self.papi.project_material_create(self.id, [mat])
+    # dedeepyo : 22-Jun-25
+
+    # dedeepyo : 7-Oct-25 : Updating material conductivities
+    def update_materials(self, materials_update_dict):
+        materials_name_list = list(materials_update_dict.keys())
+        for material_name in materials_name_list:
+            mat_id = self.return_material_table_id(material_name)
+            if mat_id:
+                # new_material = self.papi.project_material_read(self.id, mat_id)
+                value = materials_update_dict[material_name]
+                mat = danka_thermal_api.Material(name = material_name, conductivity = str(value), conductivity_y = str(value), conductivity_z = str(value), color = "#456d82", anisotropic = False)
+                self.papi.project_material_update(self.id, mat_id, mat)
+    # dedeepyo : 7-Oct-25
 
     def delete_materials(self):
         for mat in self.material_list:
@@ -598,6 +625,7 @@ class AnemoiSim(ThermalSimulator):
                                 "power" : power_parameter_in_mW
                                 # "power" : round(box.power * 1000, 2)
                             }
+                            print("Creating box : " + box.name + " with power : " + str(box.power) + " and material : " + m + " at (z : " + str(data["z"]) + ", dz :  " + str(data["dz"]) + ")")
                             self.papi.project_box_create(self.id, data)
                 # print("Creating box : " + box.name + " with power : " + str(box.power) + " and material : " + m + " at (z : " + str(data["z"]) + ", dz :  " + str(data["dz"]) + ")")
             # dedeepyo : 30-Jan-2025
@@ -709,7 +737,7 @@ class AnemoiSim(ThermalSimulator):
         return []
     
     # dedeepyo : 1-Jan-25 : Implementing TIM creation for all chiplets at the top
-    def create_TIM_to_heatsink(self, box_list, material = "TIM", min_TIM_height = 0.1):
+    def create_TIM_to_heatsink(self, box_list, material = "TIM0p5", min_TIM_height = 0.1):
         m = self.return_material_table_id(material)
         z_min = max([box.end_z for box in box_list])
         # print("z_min is : " + str(z_min))
@@ -812,7 +840,7 @@ class AnemoiSim(ThermalSimulator):
         self.papi.project_box_create(self.id, data)
 
     # Assuming same scale factor in x and y directions.
-    def create_heat_sink(self, box_list, heatsink_list, heatsink_name, min_TIM_height = 0.001, scale_factor_x = 0, scale_factor_y = 0, area_scale_factor = 0):
+    def create_heat_sink(self, box_list, heatsink_list, heatsink_name, min_TIM_height = 0.01, scale_factor_x = 0, scale_factor_y = 0, area_scale_factor = 0):
         # dedeepyo : 7-Feb-2025 : Heatsink object creation.
         heatsinks = [h for h in heatsink_list if h.get_name() == heatsink_name]
         if(heatsinks is None):
@@ -915,7 +943,7 @@ class AnemoiSim(ThermalSimulator):
         # print(data)
         self.papi.project_heatsink_create(self.id, data) # Uncomment
         # print(data["name"] + " starts at z : " + data["z"] + " and has height : " + data["base_dz"])
-        self.fill_gaps(box_list, z, material = "TIM")
+        self.fill_gaps(box_list, z_min, material = "Infill_material") # "TIM", "AlN")
 
         ## TODO: This creates multiple heat sinks. We want 1 heatsink only. Probably have to simplify this heavily.
         # print("Heat Sink:-->",material)
@@ -988,7 +1016,7 @@ class AnemoiSim(ThermalSimulator):
         # print("Successfully created HeatSink")
 
     # dedeepyo : 9-Apr-25 : Load heatsink_obj which is a dict.
-    def load_heatsink(self, box_list, heatsink_obj):
+    def load_heatsink(self, box_list, heatsink_obj, min_TIM_height):
         data = {
             "name": heatsink_obj["name"],
             "index": heatsink_obj["index"],
@@ -1007,11 +1035,36 @@ class AnemoiSim(ThermalSimulator):
             "material": self.return_material_table_id(heatsink_obj["material"]),  # Cu-Foil
         }
         self.papi.project_heatsink_create(self.id, data) # Uncomment
-        self.fill_gaps(box_list, float(heatsink_obj["z"]), material = "TIM")
+        self.fill_gaps(box_list, float(heatsink_obj["z"]) - min_TIM_height, material = "Infill_material") # "AlN") # "TIM")
     # dedeepyo : 9-Apr-25
 
+    # dedeepyo : 21-Jun-25 : Load heatsink_obj which is a dict.
+    def load_multiple_heatsinks(self, box_list, heatsink_obj_list):
+        for heatsink_obj in heatsink_obj_list:
+            data = {
+                "name": heatsink_obj["name"],
+                "index": heatsink_obj["index"],
+                "x": heatsink_obj["x"],
+                "y": heatsink_obj["y"],
+                "base_dx": heatsink_obj["base_dx"],
+                "base_dy": heatsink_obj["base_dy"],
+                "z": heatsink_obj["z"],
+                "base_dz": heatsink_obj["base_dz"],
+                "fin_height": heatsink_obj["fin_height"],
+                "fin_thickness": heatsink_obj["fin_thickness"],
+                "fin_count": heatsink_obj["fin_count"],
+                "fin_axis": heatsink_obj["fin_axis"],
+                "hc": anemoi_parameters[heatsink_obj["hc"]],
+                "bound": heatsink_obj["bound"],
+                "material": self.return_material_table_id(heatsink_obj["material"]),  # Cu-Foil
+            }
+            self.papi.project_heatsink_create(self.id, data) # Uncomment
+
+        # self.fill_gaps(box_list, float(heatsink_obj["z"]), material = "Infill_material") # "AlN") # "TIM")
+    # dedeepyo : 21-Jun-25
+
     # dedeepyo : 3-Mar-2025 : Heatsink object creation.
-    def create_heat_sink_bottom(self, box_list, heatsink_list, heatsink_name, min_TIM_height = 0.001, area_scale_factor = 1, scale_factor_x = 0, scale_factor_y = 0):
+    def create_heat_sink_bottom(self, box_list, heatsink_list, heatsink_name, min_TIM_height = 0.01, area_scale_factor = 1, scale_factor_x = 0, scale_factor_y = 0):
         heatsinks = [h for h in heatsink_list if h.get_name() == heatsink_name]
         if(heatsinks is None):
             raise Exception("Heatsink not found")
@@ -1076,7 +1129,7 @@ class AnemoiSim(ThermalSimulator):
         }
         self.papi.project_heatsink_create(self.id, data) # Uncomment
 
-        mId = self.return_material_table_id("TIM")
+        mId = self.return_material_table_id("TIM0p5")
         if mId is None:
             raise Exception("Material is None")
 
@@ -1740,13 +1793,16 @@ class AnemoiSim(ThermalSimulator):
     
     def chiplets_temperature(self, temp_map_3D, box_list):
         voxel_res, max_sizes = self.calculate_voxel_resolution_and_max_sizes(box_list)
-        f = open("output_techcon_051325_3D.txt", "w")
+        # f = open("output_techcon_051325_3D.txt", "w")
+        # f.write("Mean temperature of entire system is {}\n".format(np.mean(temp_map_3D[temp_map_3D > 0])))
         # f.write(str(temp_map_3D.shape))
         # f.write(str(temp_map_3D))
         GPU_peak_temperature = 0.0
         HBM_peak_temperature = 0.0
         GPU_min_peak_temperature = 1000.0
         HBM_min_peak_temperature = 1000.0
+        GPU_temperatures_list = []
+        HBM_temperatures_list = []
         for box in box_list:
             # temperature_sum = 0
             # max_temperature = 0
@@ -1761,15 +1817,19 @@ class AnemoiSim(ThermalSimulator):
             # f.write("start_z_n is " + str(start_z_n) + " and end_z_n is " + str(end_z_n) + " and start_y_n is " + str(start_y_n) + " and end_y_n is " + str(end_y_n) + " and start_x_n is " + str(start_x_n) + " and end_x_n is " + str(end_x_n))
             # f.write(box.name)
             temps = temp_map_3D[start_x_n:end_x_n, start_y_n:end_y_n, start_z_n:end_z_n]
+            # print(f"Box {box.name} has temps shape {temps.shape}")
             temps = temps[temps > 0]
+            # print(f"Box {box.name} has positive temps shape {temps.shape}")
             temp_avg = np.mean(temps)
-            temps = temps[temps > temp_avg]
+            # temps = temps[temps > temp_avg]
+            # print(f"{box.name} has {temps.size} voxels.")
             max_temperature = np.max(temps)
             # f.write(str(temps))
-
+            
             if(box.chiplet_parent.get_chiplet_type() == "GPU"):
                 GPU_peak_temperature = max(GPU_peak_temperature, max_temperature)
                 GPU_min_peak_temperature = min(GPU_min_peak_temperature, max_temperature)
+                GPU_temperatures_list.append(max_temperature)
             elif(box.chiplet_parent.get_chiplet_type() == "HBM"):
                 HBM_peak_temperature = max(HBM_peak_temperature, max_temperature)
                 HBM_min_peak_temperature = min(HBM_min_peak_temperature, max_temperature)
@@ -1779,8 +1839,8 @@ class AnemoiSim(ThermalSimulator):
             # temp_avg = np.mean(temps) #
             # max_temps = np.max(temps) #
             # print(max_temps) #
-            f.write("Mean temperature of " + box.name + " chiplet is " + str(temp_avg) + " and its maximum temperature is " + str(max_temperature))
-            f.write("\n")
+            # f.write("Mean temperature of " + box.name + " chiplet is " + str(temp_avg) + " and its maximum temperature is " + str(max_temperature))
+            # f.write("\n")
             # z = voxel_res[2] * (n + 1)
             # while(z < box.end_z):
                 # solutions = self.papi.project_solution_plane_list(self.id, plane="xy", coordinate=z)
@@ -1797,8 +1857,8 @@ class AnemoiSim(ThermalSimulator):
                 # z = z + voxel_res[2]
             # temp_avg = temperature_sum / voxel_count 
         # print(0)
-        f.close()
-        return (GPU_peak_temperature, HBM_peak_temperature, GPU_min_peak_temperature, HBM_min_peak_temperature)
+        # f.close()
+        return (GPU_peak_temperature, HBM_peak_temperature, GPU_min_peak_temperature, HBM_min_peak_temperature, GPU_temperatures_list, HBM_temperatures_list)
     # dedeepyo : 17-oct-24 #
 
     # dedeepyo : 8-Jan-25 : Implementing chiplet temperature on Anemoi voxels instead of local voxels #
@@ -1921,8 +1981,8 @@ class AnemoiSim(ThermalSimulator):
         # norm_z_range = np.arange(0, z_voxels, 1)
         # z_coord = voxel_res[2] / 2
 
-        # max_pages = 300
-        max_pages = 10
+        max_pages = 300
+        # max_pages = 10
         page = 1
         number = 20000
 
@@ -2271,7 +2331,7 @@ class AnemoiSim(ThermalSimulator):
 
     # dedeepyo : 14-Feb-25 : Creating a hard-coded box #
     def create_hard_coded_box(self):
-        mId = self.return_material_table_id("TIM") # Epoxy, Silver filled
+        mId = self.return_material_table_id("TIM") # Epoxy, Silver filled # AlN
         if mId is None:
             raise Exception("Material is None")
 
@@ -2290,7 +2350,7 @@ class AnemoiSim(ThermalSimulator):
         self.papi.project_box_create(self.id, data)
     # dedeepyo : 14-Feb-25 #
 
-    def simulate(self, box_list, bonding_box_list, TIM_box_list, heatsink_obj, heatsink_list, heatsink_name, bonding_list, bonding_name_type_dict, anemoi_parameter_ID, power_dict = {}, suffix="", is_repeat = False, min_TIM_height = 0.01):
+    def simulate(self, box_list, bonding_box_list, TIM_box_list, heatsink_obj, heatsink_list, heatsink_name, bonding_list, bonding_name_type_dict, layers, anemoi_parameter_ID, power_dict = {}, suffix="", is_repeat = False, min_TIM_height = 0.01, materials_update_dict = {}):
         # print("Boxes : " + str(box_list))
         # print("Heatsink list : " + str(heatsink_list))
         # print("Heatsink name : " + str(heatsink_name))
@@ -2320,11 +2380,15 @@ class AnemoiSim(ThermalSimulator):
         # self.delete_heat_sink() #
         print("Setting up simulation environment...")
         # dedeepyo : 16-Oct-24 #
-        layers = parse_Layer_netlist("configs/thermal-configs/layer_definitions.xml")        
+        # layers = parse_Layer_netlist("configs/thermal-configs/layer_definitions.xml")        
         # dedeepyo : 16-Oct-24 #
         
         # dedeepyo : 1-Jan-25 : Implementing repeat simulation #
         if is_repeat:
+            if(materials_update_dict):
+                self.update_materials(materials_update_dict) #
+                print("Materials updated.")
+                return None, None, None, None, None
             # self.update_power_plane(box_list) # 
             # self.create_hard_coded_box()
             # self.update_power_values(boxes = box_list)
@@ -2345,6 +2409,10 @@ class AnemoiSim(ThermalSimulator):
             #     "value" : "0.00"
             # }
             # self.papi.project_parameter_create(self.id, param_dict) #
+            # print(heatsink_list)
+            # return None, None, None, None, None
+            if(len(heatsink_list) > 0):
+                self.load_multiple_heatsinks(box_list, heatsink_list) #
             print("Repeating.")
         else:
             anemoi_to_local_map_start_time = time.time()
@@ -2362,19 +2430,23 @@ class AnemoiSim(ThermalSimulator):
             anemoi_to_local_map_end_time = time.time()
             print("Ending Anemoi PCB building at " + str(anemoi_to_local_map_end_time))
             print("Time taken for Anemoi PCB building is " + str(anemoi_to_local_map_end_time - anemoi_to_local_map_start_time))
-            self.load_heatsink(box_list, heatsink_obj)
+            self.load_heatsink(box_list, heatsink_obj, min_TIM_height = min_TIM_height) #
+            if(len(heatsink_list) > 0):
+                self.load_multiple_heatsinks(box_list, heatsink_list) #
             # self.create_TIM_to_heatsink(box_list, material = "TIM", min_TIM_height = min_TIM_height) #
             # self.create_heat_sink(box_list, "Cu-Foil", fin_thickness = 1, fin_height = 20, dz = 3, min_TIM_height = 0.01, scale_factor = 1) #
             # self.create_heat_sink(box_list, min_TIM_height = 0.01, scale_factor = 1, heatsink_list = heatsink_list, heatsink_name = "heatsink_water_free_convection") #
-            # self.create_heat_sink(box_list, min_TIM_height = 0.001, scale_factor = 4, heatsink_list = heatsink_list, heatsink_name = heatsink_name) #
-            # self.create_heat_sink(box_list, min_TIM_height = 0.001, heatsink_list = heatsink_list, heatsink_name = heatsink_name, scale_factor_x = 5.76, scale_factor_y = 3.16) #
+            # self.create_heat_sink(box_list, min_TIM_height = 0.01, scale_factor = 4, heatsink_list = heatsink_list, heatsink_name = heatsink_name) #
+            # self.create_heat_sink(box_list, min_TIM_height = 0.01, heatsink_list = heatsink_list, heatsink_name = heatsink_name, scale_factor_x = 5.76, scale_factor_y = 3.16) #
             # self.create_heat_sink(box_list, min_TIM_height = min_TIM_height, heatsink_list = heatsink_list, heatsink_name = heatsink_name, area_scale_factor = 1) #
             # self.create_heat_sink_bottom(box_list, heatsink_list = heatsink_list, heatsink_name = heatsink_name, min_TIM_height = min_TIM_height, area_scale_factor = 1) #
             # self.create_heat_sink(box_list,"Cu-Foil")
             # self.create_hard_coded_box()
             print("First Iteration.")
+            # return #TODO: Comment out later.
         # dedeepyo : 1-Jan-25 #
 
+        # exit(0)
         print("Boxes loaded. Solving...") #
         solution_start_time = time.time()
         self.solve() #
@@ -2413,7 +2485,7 @@ class AnemoiSim(ThermalSimulator):
         # df.visualize_temp_3D_dray2(dx = dx, dy = dy, dz = dz, fname=f"/app/nanocad/projects/deepflow_thermal/DeepFlow/result_example/T{suffix}_3D_fast.png") # This works!!
         # df.visualize_temp_3D_dray3(dx = dx, dy = dy, dz = dz, fname=f"/app/nanocad/projects/deepflow_thermal/DeepFlow/result_example/T{suffix}_3D_2.png") #
         print("Finding chiplets' temperature") #
-        GPU_peak_temperature, HBM_peak_temperature, GPU_min_peak_temperature, HBM_min_peak_temperature = self.chiplets_temperature(temp_map_3D, box_list) #
+        GPU_peak_temperature, HBM_peak_temperature, GPU_min_peak_temperature, HBM_min_peak_temperature, GPU_temperatures_list, HBM_temperatures_list = self.chiplets_temperature(temp_map_3D, box_list) #
         # self.chiplets_temperature_from_all_Anemoi_voxels(box_list) #
         # self.chiplets_temperature_from_all_Anemoi_voxels_to_local_boxes(box_list) #
 

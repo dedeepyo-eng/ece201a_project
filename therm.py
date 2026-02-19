@@ -24,6 +24,16 @@ import pickle
 import os
 import subprocess
 import re
+from collections import defaultdict
+
+import numpy as np
+from sklearn.linear_model import LinearRegression
+from sklearn.metrics import r2_score
+
+import re
+from pathlib import Path
+from typing import List, Tuple
+import csv
 
 sns.set()
 
@@ -363,6 +373,10 @@ def create_bonding(box_list, base_chiplet, bonding_dict, bonding_box_list):
         except:
             bonding = None
 
+        # dedeepyo : 03-Dec-2025 : Testing bonding for GPU on top.
+        # print(f"Bonding for {base_chiplet.get_chiplet_type()} with {chiplet.get_chiplet_type()} above it.")
+        # dedeepyo : 03-Dec-2025
+
         if bonding is not None:
             material = bonding.get_material()
             height = bonding.get_height()
@@ -381,8 +395,10 @@ def create_bonding(box_list, base_chiplet, bonding_dict, bonding_box_list):
             recursively_lift_box(chiplet, box_list, height_mm)
             bonding_box_list.append(bonding_box)
 
-        if(bonding_dict.get(chiplet.get_chiplet_type()) is not None):
-            create_bonding(box_list, chiplet, bonding_dict, bonding_box_list)
+        # if(bonding_dict.get(chiplet.get_chiplet_type()) is not None):
+        #     create_bonding(box_list, chiplet, bonding_dict, bonding_box_list)
+
+        create_bonding(box_list, chiplet, bonding_dict, bonding_box_list)
 
 def recursively_lift_box(chiplet, box_list, height):
     box = chiplet.get_box_representation()
@@ -393,30 +409,150 @@ def recursively_lift_box(chiplet, box_list, height):
     return
 
 # dedeepyo : 9-Apr-25 : Copying over TIM creation.
-def create_TIM_to_heatsink(box_list, material = "TIM", min_TIM_height = 0.1):
+def create_TIM_to_heatsink(box_list, material = "TIM0p5", min_TIM_height = 0.1, system_type = None):
     TIM_boxes = []
     z_min = max([box.end_z for box in box_list])
-    z = z_min + min_TIM_height
-    for box in box_list:
-        # dedeepyo : 12-Feb-25 : A fake chiplet always has child chiplets; that is the purpose why it is made. Also, a box here is never fake.
-        if(box.chiplet_parent.get_child_chiplets() == []):
-            tim_height = z - box.end_z
-            # print("TIM height is : " + str(tim_height))
-            if(tim_height != 0):
-                tim_box = Box(box.start_x, box.start_y, box.end_z, box.width, box.length, tim_height, 0.0, f"1:{material}", 0.0, f"{box.name}_TIM")
-                TIM_boxes.append(tim_box)
-                # print(tim_data["name"] + " starts from z : " + tim_data["z"] + " and has height : " + tim_data["dz"])
-            else:
-                print("The top of PCB " + box.name + " is at the same level as the bottom of heat sink!")
+    z = z_min
+    # top_box = [b for b in box_list if b.end_z == z_min][0]
+    # print("Highest box is : " + top_box.name + " which ends at z : " + str(z_min))
+    # print("The bottom of heat sink is at z : " + str(z))
+    if system_type != "3D_1GPU_top":
+        for box in box_list:
+            # dedeepyo : 12-Feb-25 : A fake chiplet always has child chiplets; that is the purpose why it is made. Also, a box here is never fake.
+            if(box.chiplet_parent.get_child_chiplets() == []):
+                tim_height = z - box.end_z
+                # if(tim_height != 0):
+                if(tim_height > 0.0001):
+                    # print("TIM height is : " + str(tim_height) + " for box " + box.name + " which ends at z : " + str(box.end_z))
+                    tim_box = Box(box.start_x, box.start_y, box.end_z, box.width, box.length, tim_height, 0.0, f"1:{material}", 0.0, f"{box.name}_TIM")
+                    TIM_boxes.append(tim_box)
+                    # print(tim_data["name"] + " starts from z : " + tim_data["z"] + " and has height : " + tim_data["dz"])
+                # else:
+                #     print("The top of PCB " + box.name + " is at the same level as the bottom of heat sink!")
+        
+    intp_list = [b for b in box_list if b.chiplet_parent.get_chiplet_type() == "interposer" or b.chiplet_parent.get_chiplet_type() == "substrate"]
+    intp = intp_list[0]
+    for i in intp_list:
+        if(i.end_z > intp.end_z):
+            intp = i
+
+    tim_box = Box(intp.start_x, intp.start_y, z_min, intp.width, intp.length, min_TIM_height, 0.0, f"1:{material}", 0.0, f"{intp.name}_TIM")
+    TIM_boxes.append(tim_box)
     return TIM_boxes
 
-def create_heat_sink(box_list, heatsink_list, heatsink_name, min_TIM_height = 0.001, scale_factor_x = 0, scale_factor_y = 0, area_scale_factor = 0):
+# dedeepyo : 21-Jun-25 : Creating multiple heat sinks for a chiplet tree.
+def calculate_GPU_HBM_HTC(box_list, power_dict, hc):
+    # Assumption that we already have temperature data with default HTC hc. We use those temperatures to calculate the individual HTC for GPU and HBM.
+    GPU_HTC = 15236.73003 # hc
+    HBM_HTC = 2729.690335 # hc
+    return GPU_HTC, HBM_HTC
+
+def create_multiple_heat_sinks(box_list, heatsink_list, heatsink_name, power_dict, min_TIM_height = 0.01): # , scale_factor_x = 0, scale_factor_y = 0, area_scale_factor = 0):
     # dedeepyo : 7-Feb-2025 : Heatsink object creation.
     heatsinks = [h for h in heatsink_list if h.get_name() == heatsink_name]
     if(heatsinks is None):
         raise Exception("Heatsink not found")
     
+    fin_height = heatsinks[0].get_fin_height()
+    fin_thickness = heatsinks[0].get_fin_thickness()
+    material = heatsinks[0].get_material()
+    fin_number = heatsinks[0].get_fin_count()
+    hc = heatsinks[0].get_hc()
+    fin_offset = heatsinks[0].get_fin_offset()
+    dz = heatsinks[0].get_base_thickness()
+    bind_to_ambient = heatsinks[0].get_bind_to_ambient()
+
+    if(fin_number == 0):
+        if(fin_thickness > 0):
+            fin_number = int(dx / (2 * fin_thickness))
+    
     excluded_types = ["interposer", "substrate", "PCB", "Power_Source"]
+    box_list_min = [box for box in box_list if box.chiplet_parent.get_chiplet_type() not in excluded_types]
+    z_min = max([box.end_z for box in box_list_min])
+    z = z_min + min_TIM_height
+    
+    # x_min = min([box.start_x for box in box_list_min])
+    # x_max = max([box.end_x for box in box_list_min])
+    # y_min = min([box.start_y for box in box_list_min])
+    # y_max = max([box.end_y for box in box_list_min])
+        
+    # if(area_scale_factor != 0):
+    #     dimension_scale_factor = math.sqrt(area_scale_factor)
+    #     dx = dimension_scale_factor * (x_max - x_min)
+    #     dy = dimension_scale_factor * (y_max - y_min)
+    # elif(scale_factor_x == 0):
+    #     if(scale_factor_y == 0):
+    #         dy = heatsinks[0].get_base_length()
+    #     else:
+    #         dy = scale_factor_y * (y_max- y_min)
+    #     dx = heatsinks[0].get_base_width()
+    # elif(scale_factor_y == 0):
+    #     dy = heatsinks[0].get_base_length()
+    #     dx = scale_factor_x * (x_max - x_min)
+    # else:
+    #     dx = scale_factor_x * (x_max - x_min)
+    #     dy = scale_factor_y * (y_max- y_min)
+
+    # x = (x_max + x_min - dx) / 2
+    # y = (y_max + y_min - dy) / 2
+
+    GPU_HTC = hc
+    HBM_HTC = hc
+    GPU_HTC, HBM_HTC = calculate_GPU_HBM_HTC(box_list, power_dict, hc)
+
+    HTC_dict = {
+        "GPU_HTC": GPU_HTC / 1000,  # Convert to kW/m^2-K
+        "HBM_HTC": HBM_HTC / 1000
+    }
+    power_dict.update(HTC_dict)
+    heatsink_data_list = []
+    chiplet_HTC = {
+        "GPU": "GPU_HTC",
+        "HBM": "HBM_HTC"
+    }
+    box_list_top = []
+    for box in box_list:
+        if(box.chiplet_parent.get_child_chiplets() == []):
+            box_list_top.append(box)
+    for box in box_list_top:
+        chiplet_type = box.chiplet_parent.get_chiplet_type()[0:3]
+        hc = chiplet_HTC.get(chiplet_type, None)
+        if(hc is not None):
+            # print(f"HTC is {hc} for chiplet type {chiplet_type}")
+            x = box.start_x
+            y = box.start_y
+            dx = box.width
+            dy = box.length
+            heatsink_data = {
+                "name": f"HS_top_{box.name}",
+                "index": 0,
+                "material": material,  # Cu-Foil
+                "x": str(round(x, 6)),
+                "y": str(round(y, 6)),
+                "base_dx": str(round(dx, 6)),
+                "base_dy": str(round(dy, 6)),
+                "z": str(round(z, 6)),
+                "base_dz": str(round(dz, 6)),
+                "fin_height": str(fin_height),
+                "fin_thickness": str(fin_thickness),
+                "fin_count": str(fin_number),
+                "fin_axis": "Y",
+                "hc": str(hc),
+                "bound": bind_to_ambient
+            }
+            heatsink_data_list.append(heatsink_data)
+    
+    return heatsink_data_list, power_dict
+# dedeepyo : 21-Jun-25
+
+def create_heat_sink(box_list, heatsink_list, heatsink_name, min_TIM_height = 0.01, scale_factor_x = 0, scale_factor_y = 0, area_scale_factor = 0):
+    # dedeepyo : 7-Feb-2025 : Heatsink object creation.
+    heatsinks = [h for h in heatsink_list if h.get_name() == heatsink_name]
+    if(heatsinks is None):
+        raise Exception("Heatsink not found")
+    
+    # excluded_types = ["interposer", "substrate", "PCB", "Power_Source"]
+    excluded_types = []
     box_list_min = [box for box in box_list if box.chiplet_parent.get_chiplet_type() not in excluded_types]
     x_min = min([box.start_x for box in box_list_min])
     x_max = max([box.end_x for box in box_list_min])
@@ -462,11 +598,12 @@ def create_heat_sink(box_list, heatsink_list, heatsink_name, min_TIM_height = 0.
     bind_to_ambient = heatsinks[0].get_bind_to_ambient()
 
     if(fin_number == 0):
-        fin_number = int(dx / (2 * fin_thickness))
+        if(fin_thickness > 0):
+            fin_number = int(dx / (2 * fin_thickness))
 
     heatsink_data = {
         "name": f"HS_top",
-        "index": 0,
+        "index": 0, # 10000000, # 
         # "material": self.return_material_table_id(material),  # Cu-Foil
         "material": material,  # Cu-Foil
         "x": str(round(x, 6)),
@@ -485,6 +622,28 @@ def create_heat_sink(box_list, heatsink_list, heatsink_name, min_TIM_height = 0.
     return heatsink_data
 # dedeepyo : 09-Apr-2025 #
 
+# dedeepyo : 03-Dec-2025 : Implementing DFS.
+def find_deepest_node(chiplet_tree):
+    if not chiplet_tree or len(chiplet_tree) == 0:
+        return None
+    
+    root = chiplet_tree[0]
+    deepest_node = root
+    max_depth = 0
+    
+    def traverse(node, depth):
+        nonlocal deepest_node, max_depth
+        if depth > max_depth:
+            max_depth = depth
+            deepest_node = node
+        
+        for child in node.get_child_chiplets():
+            traverse(child, depth + 1)
+    
+    traverse(root, 0)
+    return deepest_node
+# dedeepyo : 03-Dec-2025
+
 @click.command("standalone")
 @click.option('--therm_conf', help='The thermal config file')
 # @click.option('--deep_conf', help='The deepflow config file')
@@ -494,9 +653,17 @@ def create_heat_sink(box_list, heatsink_list, heatsink_name, min_TIM_height = 0.
 @click.option('--bonding_conf', help='The bonding config file')
 @click.option('--heatsink', help='The heatsink name')
 # @click.option('--bonding', help='The bonding name')
-def therm(therm_conf, heatsink_conf, bonding_conf, heatsink, out_dir, simtype = "Anemoi"):
+@click.option('--project_name', help='The project name')
+@click.option('--is_repeat', default = False, help='Is this a repeat run?')
+@click.option('--hbm_stack_height', default = 1, help='Number of dies per HBM stack')
+@click.option('--system_type', default = "2p5D", help='The system type')
+@click.option('--dummy_si', default = False, help='Does 3D have dummy Si?')
+@click.option('--tim_cond_list', default = [10.0], multiple = True, help='The TIM conductivity list')
+@click.option('--infill_cond_list', default = [1.6], multiple = True, help='The infill conductivity list')
+@click.option('--underfill_cond_list', default = [1.6], multiple = True, help='The underfill conductivity list')
+def therm(therm_conf, heatsink_conf, bonding_conf, heatsink, out_dir, project_name, simtype = "Anemoi", is_repeat = False, hbm_stack_height = 1, system_type = "2p5D", dummy_si = False, tim_cond_list = (5, 10, 50), infill_cond_list = (1.6, 19), underfill_cond_list = (1.6, 19)):
 
-    simulator = SimulatorFactory.get_simulator(simtype)
+    simulator = SimulatorFactory.get_simulator(type = simtype, name = project_name)
 
     chiplet_tree = parse_all_chiplets(therm_conf)
     (w_top, l_top) = recursive_chiplet_sizing(chiplet_tree[0], None)
@@ -1208,6 +1375,47 @@ def therm(therm_conf, heatsink_conf, bonding_conf, heatsink, out_dir, simtype = 
 
                     # f.write("overlap_count_new of " + str(box.name) + " after y-movement and before x-movement is " + str(overlaps_new) + "\n")
                     
+            # dedeepyo : 10-Oct-25 : Implementing dummy Si. #TODO: Comment for 2.5D or anything other than 3D. Uncommen`t for 3D.`
+            if(system_type == "3D_1GPU" or system_type == "3D_waferscale" or system_type == "3D_1GPU_top"):
+                dummy_Si_height = 0.63 # in mm # 0.62 for 8-high, 0.63 for 16-high.
+                min_x = min([c.start_x for c in children_boxes]) - min_dist
+                max_x = max([c.end_x for c in children_boxes]) + min_dist
+                min_y = min([c.start_y for c in children_boxes]) - min_dist
+                max_y = max([c.end_y for c in children_boxes]) + min_dist
+                if(parent.start_x < min_x):
+                    if(parent.start_y < min_y):
+                        if(parent.end_x > max_x):
+                            if(parent.end_y > max_y):
+                                box = Box(parent.start_x, parent.start_y, parent.end_z, min_x - parent.start_x, parent.length, dummy_Si_height, 0.0, "1:dummySi_HBM", 0, parent.name + ".Dummy_Si_above_1")
+                                chiplet = Chiplet(name = parent.name + ".Dummy_Si_above_1", core_area = box.width * box.length, aspect_ratio = box.width / box.length, assembly_process = parent.chiplet_parent.get_assembly_process(), stackup = "1:dummySi_HBM", height = dummy_Si_height)
+                                r = parent.chiplet_parent.add_child_chiplet(chiplet)
+                                boxes.append(box)
+                                box.assign_chiplet_parent(chiplet)
+                                chiplet.set_box_representation(box)
+                                
+                                box = Box(max_x, parent.start_y, parent.end_z, parent.end_x - max_x, parent.length, dummy_Si_height, 0.0, "1:dummySi_HBM", 0, parent.name + ".Dummy_Si_above_2")
+                                chiplet = Chiplet(name = parent.name + ".Dummy_Si_above_2", core_area = box.width * box.length, aspect_ratio = box.width / box.length, assembly_process = parent.chiplet_parent.get_assembly_process(), stackup = "1:dummySi_HBM", height = dummy_Si_height)
+                                r = parent.chiplet_parent.add_child_chiplet(chiplet)
+                                boxes.append(box)
+                                box.assign_chiplet_parent(chiplet)
+                                chiplet.set_box_representation(box)
+                                
+                                box = Box(min_x, parent.start_y, parent.end_z, max_x - min_x, min_y - parent.start_y, dummy_Si_height, 0.0, "1:dummySi_HBM", 0, parent.name + ".Dummy_Si_above_3")
+                                chiplet = Chiplet(name = parent.name + ".Dummy_Si_above_3", core_area = box.width * box.length, aspect_ratio = box.width / box.length, assembly_process = parent.chiplet_parent.get_assembly_process(), stackup = "1:dummySi_HBM", height = dummy_Si_height)
+                                r = parent.chiplet_parent.add_child_chiplet(chiplet)
+                                boxes.append(box)
+                                box.assign_chiplet_parent(chiplet)
+                                chiplet.set_box_representation(box)
+                                
+                                box = Box(min_x, max_y, parent.end_z, max_x - min_x, parent.end_y - max_y, dummy_Si_height, 0.0, "1:dummySi_HBM", 0, parent.name + ".Dummy_Si_above_4")
+                                chiplet = Chiplet(name = parent.name + ".Dummy_Si_above_4", core_area = box.width * box.length, aspect_ratio = box.width / box.length, assembly_process = parent.chiplet_parent.get_assembly_process(), stackup = "1:dummySi_HBM", height = dummy_Si_height)
+                                r = parent.chiplet_parent.add_child_chiplet(chiplet)
+                                boxes.append(box)
+                                box.assign_chiplet_parent(chiplet)
+                                chiplet.set_box_representation(box)
+                            #TODO: Other cases not handled. 
+            # dedeepyo : 10-Oct-25 #
+
             # f.close()
             # dedeepyo : 26-Jan-2025 : Implementing set sizing based on child chiplet dimensions.
             # Assuming all the minimum possible dimensions of the present set of chiplets are already known / calculated.
@@ -1241,8 +1449,8 @@ def therm(therm_conf, heatsink_conf, bonding_conf, heatsink, out_dir, simtype = 
     #     'set_secondary' : (5680.369353, 0.4578712122)
     # }
     # for box in boxes_unique:
-        # print(box.name + " " + str(box.start_z) + " " + str(box.end_z) + " " + str(box.height) + " " + str(box.width) + " " + str(box.length) + " " + str(box.start_x) + " " + str(box.start_y))
-    
+    #     print(box.name + " " + str(box.start_z) + " " + str(box.end_z) + " " + str(box.height) + " " + str(box.width) + " " + str(box.length) + " " + str(box.start_x) + " " + str(box.start_y))
+    # return #TODO: Comment out later.
     # dedeepyo : 29-Jan-2025 : Sizing fake chiplets.
     recursively_copy_chiplet_sizes(fake_chiplet_size_dict, chiplet_tree[0])
     # dedeepyo : 29-Jan-2025 #
@@ -1280,26 +1488,118 @@ def therm(therm_conf, heatsink_conf, bonding_conf, heatsink, out_dir, simtype = 
     draw_fig_3D_zoom(boxes,out_dir,"post",limits)
     print("Placement finished, plots generated")
     # print(str(boxes))
+    # return #TODO: Comment out later.
 
     # for box in boxes:
-    #     if(box.chiplet_parent.get_chiplet_type() == "GPU" or box.chiplet_parent.get_chiplet_type() == "HBM"):
+    #     if(box.chiplet_parent.get_chiplet_type() == "GPU" or box.chiplet_parent.get_chiplet_type() == "HBM_l1"):
     #         print("Created : ", box.name + " at (" + str(box.start_x) + "," + str(box.start_y) + "," + str(box.start_z) + ") with width " + str(box.width) + " and length " + str(box.length) + " and height " + str(box.height))
 
+    # return #TODO: Comment out later.
+
+    layers = parse_Layer_netlist("configs/thermal-configs/layer_definitions.xml")
     heatsink_list = heatsink_definition_list_from_file(heatsink_conf)
     bonding_list = bonding_definition_list_from_file(bonding_conf)
     heatsink_name = heatsink
-    bonding_name_type_dict = {"GPU#HBM": "bonding_Cu_pillar", "HBM#GPU": "bonding_Cu_pillar", "GPU#interposer": "bonding_Cu_pillar", "interposer#GPU": "bonding_Cu_pillar", "interposer#HBM": "bonding_Cu_pillar", "HBM#interposer": "bonding_Cu_pillar", "interposer#PCB": "bonding_bga_ball", "PCB#interposer": "bonding_bga_ball", "interposer#substrate": "bonding_bga_ball", "substrate#interposer": "bonding_bga_ball", "substrate#Power_Source": "bonding_bga_ball", "Power_Source#substrate": "bonding_bga_ball", "interposer#Power_Source": "bonding_bga_ball", "Power_Source#interposer": "bonding_bga_ball", "GPU#substrate": "bonding_Cu_pillar", "substrate#GPU": "bonding_Cu_pillar", "substrate#HBM": "bonding_Cu_pillar", "HBM#substrate": "bonding_Cu_pillar", "GPU#PCB": "bonding_Cu_pillar", "PCB#GPU": "bonding_Cu_pillar", "PCB#HBM": "bonding_Cu_pillar", "HBM#PCB": "bonding_Cu_pillar", "PCB#Power_Source": "bonding_bga_ball", "Power_Source#PCB": "bonding_bga_ball"}
+    bonding_name_type_dict = {"GPU#HBM_l4": "bonding_Cu_pillar", "HBM_l4#GPU": "bonding_Cu_pillar", "GPU#HBM_l12": "bonding_Cu_pillar", "HBM_l12#GPU": "bonding_Cu_pillar", "GPU#HBM_l16": "bonding_Cu_pillar", "HBM_l16#GPU": "bonding_Cu_pillar", "GPU#HBM_l8": "bonding_Cu_pillar", "HBM_l8#GPU": "bonding_Cu_pillar", "GPU#HBM": "bonding_Cu_pillar", "HBM#GPU": "bonding_Cu_pillar", "GPU#interposer": "bonding_Cu_pillar", "interposer#GPU": "bonding_Cu_pillar", "interposer#HBM": "bonding_Cu_pillar", "HBM#interposer": "bonding_Cu_pillar", "interposer#PCB": "bonding_bga_ball", "PCB#interposer": "bonding_bga_ball", "interposer#substrate": "bonding_bga_ball", "substrate#interposer": "bonding_bga_ball", "substrate#Power_Source": "bonding_bga_ball", "Power_Source#substrate": "bonding_bga_ball", "interposer#Power_Source": "bonding_bga_ball", "Power_Source#interposer": "bonding_bga_ball", "GPU#substrate": "bonding_Cu_pillar", "substrate#GPU": "bonding_Cu_pillar", "substrate#HBM": "bonding_Cu_pillar", "HBM#substrate": "bonding_Cu_pillar", "GPU#PCB": "bonding_Cu_pillar", "PCB#GPU": "bonding_Cu_pillar", "PCB#HBM": "bonding_Cu_pillar", "HBM#PCB": "bonding_Cu_pillar", "PCB#Power_Source": "bonding_bga_ball", "Power_Source#PCB": "bonding_bga_ball"}
     # bonding_name = bonding_name_type_dict
     recursively_remove_fake_chiplets(chiplet_tree[0])
     # recursively_find_fakes(chiplet_tree[0])
-    is_repeat = False
-    min_TIM_height = 0.01
+    is_repeat = is_repeat # False
+    min_TIM_height = 0.1 # 0.02 # 0.1 # 0.01, 0.02, 0.05, 0.1
     suffix = ""
     
+    # print(str(boxes))
+    # print("After creating bonding, TIM and heatsink:")
+    # for box in boxes:
+    #     print(box.name + " " + str(box.start_z) + " " + str(box.end_z) + " " + str(box.height) + " " + str(box.width) + " " + str(box.length) + " " + str(box.start_x) + " " + str(box.start_y) + " " + str(box.end_x) + " " + str(box.end_y))
+
+    # dedeepyo : 01-Dec-25 : Implementing GPU on top.
+    # Box(x_coord,y_coord,z_coord,width,length,height,power,"1:5nm_GPU_active_3D,20:5nm_GPU_metal",0,"Power_Source.substrate.HBM.GPU")
+    # dedeepyo : 03-Dec-25 : Implementing GPU on top.
+    if(system_type == "3D_1GPU_top"):
+        # <chip name="GPU"
+            # bb_area="$core_area"
+            # bb_cost=""
+            # bb_quality=""
+            # bb_power=""
+            # aspect_ratio="0.787"
+            # x_location=""
+            # y_location=""
+        
+            # core_area="0.0"
+            # fraction_memory="0.0"
+            # fraction_logic="1.0"
+            # fraction_analog="0.0"
+            # gate_flop_ratio="1.0"
+            # reticle_share="1.0"
+            # buried="False"
+            # assembly_process="silicon_individual_bonding"
+            # test_process="KGD_free_test"
+            # stackup="1:5nm_GPU_active_3D,20:5nm_GPU_metal"
+            # wafer_process="process_1"
+            # v_rail="5,1.8"
+            # reg_eff="1.0,0.9"
+            # reg_type="none,side"
+            # core_voltage="1.0"
+            # power="$core_power"
+            # quantity="1000000"
+            # fake="False"
+
+            # floorplan=""
+            # floorplan_dict=""></chip>
+        deepest_node = find_deepest_node(chiplet_tree)
+        deepest_node_box = deepest_node.get_box_representation()
+        z_coord = deepest_node_box.start_z + deepest_node_box.height
+
+        GPU_stackup = "1:5nm_GPU_active_3D,20:5nm_GPU_metal"
+        height = 0
+        stackup_list = GPU_stackup.split(",")
+        for stackup in stackup_list:
+            layer_num, layer_name = stackup.split(":")
+            for layer in layers:
+                if layer.get_name() == layer_name:
+                    height += (int(layer_num) * layer.get_thickness())
+
+        height = round(height, 3) #CHECK: 3 decimal places. 
+        
+        GPU_chiplet = Chiplet(name=deepest_node.get_name() + ".GPU", core_area=826.2, aspect_ratio= 0.787, fraction_memory=0.0, fraction_logic=1.0, fraction_analog=0.0, assembly_process="silicon_individual_bonding", stackup=stackup, power=270.0, floorplan="", floorplan_dict="", fake=False, height=height)
+        width = math.sqrt(GPU_chiplet.get_core_area() * GPU_chiplet.get_aspect_ratio())
+        length = GPU_chiplet.get_core_area() / width
+        GPU_box = Box(0.0,0.0,z_coord,width,length,GPU_chiplet.get_height(),GPU_chiplet.get_power(),GPU_chiplet.get_stackup(),0,GPU_chiplet.get_name())
+        GPU_box.assign_chiplet_parent(GPU_chiplet)
+        GPU_chiplet.set_box_representation(GPU_box)
+        boxes.append(GPU_box) #TODO
+
+        deepest_node.add_child_chiplet(GPU_chiplet)
+    # dedeepyo : 01-Dec-25 #
+
     bonding_box_list = create_all_bonding(box_list = boxes, name_type_dict = bonding_name_type_dict, bonding_list = bonding_list) #        
-    TIM_boxes = create_TIM_to_heatsink(box_list = boxes, material = "TIM", min_TIM_height = min_TIM_height)
+    TIM_boxes = create_TIM_to_heatsink(box_list = boxes, material = "TIM0p5", min_TIM_height = min_TIM_height, system_type = system_type)
     heatsink_obj = create_heat_sink(box_list = boxes, heatsink_list = heatsink_list, heatsink_name = heatsink_name, min_TIM_height = min_TIM_height, scale_factor_x = 0, scale_factor_y = 0, area_scale_factor = 1)
     create_power_source_backside(boxes) #
+    power_dict = initialize_power_dict_values(boxes)
+
+    # print("After creating bonding, TIM and heatsink:")
+    # for box in boxes:
+    #     print(box.name + " " + str(box.start_z) + " " + str(box.end_z) + " " + str(box.height) + " " + str(box.width) + " " + str(box.length) + " " + str(box.start_x) + " " + str(box.start_y) + " " + str(box.end_x) + " " + str(box.end_y))
+    
+    # print(str(boxes))    
+    # return #TODO: Comment out later.
+
+    # dedeepyo : 21-Jun-25 : Implmenting multiple heatsinks. 
+    # heatsink_list till now stored definitions of heatsinks. From now on, it will store the actual heatsink objects used with coordinates.
+    multiple_heatsinks = False # True if multiple heatsinks are used, False if only one heatsink is used.
+    if not multiple_heatsinks:
+        heatsink_list = []
+    else:
+        heatsink_list_new, power_dict_new = create_multiple_heat_sinks(box_list = boxes, heatsink_list = heatsink_list, heatsink_name = heatsink_name, min_TIM_height = min_TIM_height, power_dict = power_dict) # , scale_factor_x = 0, scale_factor_y = 0, area_scale_factor = 1)
+        heatsink_list = heatsink_list_new
+        power_dict = power_dict_new
+    # dedeepyo : 21-Jun-25
+
+    # dedeepyo : 01-Dec-25 #
+    # Below is only Anemoi, above is tool-agnostic.
+    # dedeepyo : 01-Dec-25 #
     data = {
                 'boxes' : boxes,
                 'heatsink_list' : heatsink_list,
@@ -1310,30 +1610,158 @@ def therm(therm_conf, heatsink_conf, bonding_conf, heatsink, out_dir, simtype = 
                 'suffix' : suffix,
                 'is_repeat' : is_repeat,
                 'min_TIM_height' : min_TIM_height,
+                'layers' : layers
     }
     with open('data_dray1_051425.pkl', 'wb') as f:
         pickle.dump(data, f)
 
-    simulation_start_time = time.time()
-    print("Starting simulation at ", simulation_start_time)
-    GPU_peak_temperature_list = []
-    HBM_peak_temperature_list = []
+    # return
+    # GPU_peak_temperature_list = []
+    # HBM_peak_temperature_list = []
     GPU_time_frac_idle_list = []
+    GPU_min_peak_temperature_list = []
+    HBM_min_peak_temperature_list = []
     
     # box_temperatures = {box.name : [] for box in boxes}
     # print(box_temperatures)
-    # results = simulator.simulate(boxes, bonding_box_list, TIM_boxes, heatsink_obj = heatsink_obj, heatsink_list = heatsink_list, heatsink_name = heatsink_name, bonding_list = bonding_list, bonding_name_type_dict = bonding_name_type_dict, is_repeat = True,  min_TIM_height = min_TIM_height) #
-    power_dict = initialize_power_dict_values(boxes)
-    anemoi_parameter_ID = {}
+    # results = simulator.simulate(boxes, bonding_box_list, TIM_boxes, heatsink_obj = heatsink_obj, heatsink_list = heatsink_list, heatsink_name = heatsink_name, bonding_list = bonding_list, bonding_name_type_dict = bonding_name_type_dict, is_repeat = is_repeat,  min_TIM_height = min_TIM_height, layers = layers) #
+    anemoi_parameter_ID = {} # Uncomment
+    # anemoi_parameter_ID = {'interposer_power': 1949, 'substrate_power': 1950, 'PCB_power': 1951, 'GPU_power': 1946, 'Power_Source_power': 1952, 'HBM_power': 1947, 'GPU_HTC_power': 1953, 'HBM_l_power': 1948, 'HBM_HTC_power': 1954}
     # print("Power dict initialized: ", power_dict)
-    results = simulator.simulate(boxes, bonding_box_list, TIM_boxes, heatsink_obj = heatsink_obj, heatsink_list = heatsink_list, heatsink_name = heatsink_name, bonding_list = bonding_list, bonding_name_type_dict = bonding_name_type_dict, is_repeat = True,  min_TIM_height = min_TIM_height, power_dict = power_dict, anemoi_parameter_ID = anemoi_parameter_ID) #
-    GPU_peak_temperature, HBM_peak_temperature, GPU_min_peak_temperature, HBM_min_peak_temperature, anemoi_parameter_ID = results # 87.534, 87.15 # results
-    GPU_peak_temperature_list.append(GPU_peak_temperature)
-    HBM_peak_temperature_list.append(HBM_peak_temperature)
+
+    if(is_repeat == False):
+        simulation_start_time = time.time()
+        print("Starting simulation at ", simulation_start_time)
+        
+        is_repeat = is_repeat # False # False # True if the simulation is repeated with different powers, False if only one simulation is run.
+        results = simulator.simulate(boxes, bonding_box_list, TIM_boxes, heatsink_obj = heatsink_obj, heatsink_list = heatsink_list, heatsink_name = heatsink_name, bonding_list = bonding_list, bonding_name_type_dict = bonding_name_type_dict, is_repeat = is_repeat,  min_TIM_height = min_TIM_height, power_dict = power_dict, anemoi_parameter_ID = anemoi_parameter_ID, layers = layers) #
+        
+        simulation_end_time = time.time()
+        print("Simulation finished at ", simulation_end_time)
+        print("Time taken for simulation: ", simulation_end_time - simulation_start_time)
+        return #TODO: Comment out later
+
+    temperature_dict = defaultdict(lambda : defaultdict(list)) # temperature_dict[GPU_power][HBM_power] = [GPU_peak_temperature, HBM_peak_temperature, GPU_min_peak_temperature, HBM_min_peak_temperature]
+    
+    # GPU_peak_temperature, HBM_peak_temperature, GPU_min_peak_temperature, HBM_min_peak_temperature, anemoi_parameter_ID = results # 87.534, 87.15 # results #TODO: Uncomment.
+    # temperature_dict[power_dict["GPU"]][5 * power_dict["HBM"]] = results[0:4] #TODO: Uncomment
+    # print(f"GPU_peak_temperature: {GPU_peak_temperature} C, HBM_peak_temperature: {HBM_peak_temperature} C, GPU_min_peak_temperature: {GPU_min_peak_temperature} C, HBM_min_peak_temperature: {HBM_min_peak_temperature} C")
+    # return
+
+    if os.path.exists("dray_ECTC1.txt"):
+        os.remove("dray_ECTC1.txt")
+    if os.path.exists("dray_ECTC2.txt"):
+        os.remove("dray_ECTC2.txt") 
+    if os.path.exists("dray_ECTC3.txt"):
+        os.remove("dray_ECTC3.txt")
+
+    for TIM_cond in tim_cond_list: # [10]: # [5, 10]: tim_cond_list = (5, 10, 50)
+        for infill_cond in infill_cond_list: # [19]: # tim_cond_list = (1.6, 19)
+            for underfill_cond in underfill_cond_list: # [19]: underfill_cond_list = (1.6, 19)
+                materials_update_dict = {
+                    "TIM0p5": TIM_cond,
+                    "Infill_material": infill_cond,
+                    "EpAg": underfill_cond
+                }
+                results = simulator.simulate(boxes, bonding_box_list, TIM_boxes, materials_update_dict = materials_update_dict, heatsink_obj = heatsink_obj, heatsink_list = heatsink_list, heatsink_name = heatsink_name, bonding_list = bonding_list, bonding_name_type_dict = bonding_name_type_dict, is_repeat = is_repeat,  min_TIM_height = min_TIM_height, power_dict = power_dict, anemoi_parameter_ID = anemoi_parameter_ID, layers = layers)
+
+                f = open("dray_ECTC1.txt", "w")
+                factor_per_die = hbm_stack_height + 2
+                if(hbm_stack_height == 8):
+                    col2_values = [5.0, 5.6, 6.8024] # For 8-high HBM stack
+                elif(hbm_stack_height == 16):
+                    col2_values = [9.0, 9.4, 10.1218] # For 16-high HBM stack
+                else:
+                    col2_values = [5.0, 5.6, 6.8024]
+                # GPU_power = 50.0 # 380.0 # 200.0 # 270.0
+                # for HBM_power in [5.0, 5.6, 6.8024]: # [5.6]: # 
+                #     power_dict["HBM"] = 2 * HBM_power / 10 # power in W
+                #     power_dict["HBM_l"] = HBM_power / 10 # power in W
+                # for HBM_power in [9.0, 9.4, 10.1218]: # [5.6]: # For 16-high HBM stack #TODO: Comment for 8-high HBM stack
+                #     power_dict["HBM"] = 2 * HBM_power / 18 # power in W # For 16-high HBM stack #TODO: Comment for 8-high HBM stack
+                #     power_dict["HBM_l"] = HBM_power / 18 # power in W # For 16-high HBM stack #TODO: Comment for 8-high HBM stack
+                for HBM_power in col2_values: # [5.6]:
+                    power_dict["HBM"] = 2 * HBM_power / factor_per_die # power in W
+                    power_dict["HBM_l"] = HBM_power / factor_per_die # power in W
+                    for GPU_power in [320.0, 270.0, 220.0, 170.0, 120.0, 70.0]: # [320.0, 270.0]:
+                        power_dict["GPU"] = GPU_power # power in W
+                        power_dict["Power_Source"] = update_power_source_backside(boxes, power_dict) # power in W
+                        results = simulator.simulate(boxes, bonding_box_list, TIM_boxes, heatsink_obj = heatsink_obj, heatsink_list = heatsink_list, heatsink_name = heatsink_name, bonding_list = bonding_list, bonding_name_type_dict = bonding_name_type_dict, is_repeat = is_repeat,  min_TIM_height = min_TIM_height, power_dict = power_dict, anemoi_parameter_ID = anemoi_parameter_ID, layers = layers)
+                        temperature_dict[GPU_power][HBM_power] = results[0:6] # results[0:4]
+                        anemoi_parameter_ID = results[-1]
+                        f.write(f"{GPU_power} {HBM_power} {temperature_dict[GPU_power][HBM_power][0]} {temperature_dict[GPU_power][HBM_power][1]}\n")
+                        # f.write(f"temperature_dict[{GPU_power}][{HBM_power}] = {temperature_dict[GPU_power][HBM_power]}\n")
+
+                f.close()
+
+                # f = open("dray_ECTC2.txt", "a")
+                f = open("calibration_data.csv", "a")
+                filename = "dray_ECTC1.txt"
+                data = read_data(filename)
+                # infill_cond_mark = 1 if infill_cond == 1.6 else infill_cond
+                # underfill_cond_mark = 1 if underfill_cond == 1.6 else underfill_cond
+                
+                # key = f"{system_name}_{hbm_stack_height}_{7}_{TIM_cond}_{infill_cond}_{underfill_cond}"
+
+                # f.write(f"\nif((TIM_cond == {TIM_cond}) and (infill_cond == {infill_cond_mark}) and (underfill_cond == {underfill_cond_mark})):\n") #TODO: Uncomment for non-3D
+                # f.write(f"\nif((TIM_cond == {TIM_cond}) and (infill_cond == {infill_cond_mark}) and (underfill_cond == {underfill_cond_mark}) and (dummy_Si == True))):\n") #TODO: Comment for non-3D
+                HTC = float(heatsink_obj.get("hc")) / 1000.0 # in kW/(m^2 * K)
+                interpolate_and_report(data, col2_values, f, system_name = system_type, HTC = HTC, TIM_conductivity = TIM_cond, infill_conductivity = infill_cond, underfill_conductivity = underfill_cond, HBM_stack_height = hbm_stack_height, dummy_Si = dummy_si)
+                f.close()
+
+    # project_root = Path(__file__).resolve().parent
+    # source_path = project_root / "dray_ECTC2.txt"
+    # destination_path = project_root / "dray_ECTC3.txt"
+
+    # if not source_path.exists():
+    #     raise FileNotFoundError(f"Source file not found: {source_path}")
+
+    # convert(source_path, destination_path, hbm_stack_height = hbm_stack_height)
+    # print(f"Converted {source_path.name} → {destination_path.name}")
+    
+    return
+
+    # GPU_peak_temperature_list.append(GPU_peak_temperature)
+    # HBM_peak_temperature_list.append(HBM_peak_temperature)
+    # GPU_min_peak_temperature_list.append(GPU_min_peak_temperature)
+    # HBM_min_peak_temperature_list.append(HBM_min_peak_temperature)
     # print(results)
     # with open(out_dir + '/therm_out.txt', 'w') as f:
        #     f.write('This is a placeholder for the thermal output\n')
     # get_temperatures_from_results(file = "output_techcon_051325_3D.txt")
+
+    # dedeepyo : 19-Jun-2025 : Implementing GPU thermal throttling powers.
+    f = open("dray_temperature_dict_2p5D_waferscale.txt", "w")
+    GPU_power = 50.0 # 380.0 # 200.0 # 270.0
+    while(GPU_power > 20.0):
+        GPU_power -= 10.0
+        power_dict["GPU"] = GPU_power # power in W
+        for HBM_power in [5.0, 5.6, 6.8024]: # [5.6]: # 
+            power_dict["HBM"] = 2 * HBM_power / 10 # power in W
+            power_dict["HBM_l"] = HBM_power / 10 # power in W
+            power_dict["Power_Source"] = update_power_source_backside(boxes, power_dict) # power in W
+            results = simulator.simulate(boxes, bonding_box_list, TIM_boxes, heatsink_obj = heatsink_obj, heatsink_list = heatsink_list, heatsink_name = heatsink_name, bonding_list = bonding_list, bonding_name_type_dict = bonding_name_type_dict, is_repeat = is_repeat,  min_TIM_height = min_TIM_height, power_dict = power_dict, anemoi_parameter_ID = anemoi_parameter_ID, layers = layers)
+            temperature_dict[GPU_power][HBM_power] = results[0:4]
+            anemoi_parameter_ID = results[-1]
+            f.write(f"temperature_dict[{GPU_power}][{HBM_power}] = {temperature_dict[GPU_power][HBM_power]}\n")
+
+            # GPU_peak_temperature, HBM_peak_temperature, GPU_min_peak_temperature, HBM_min_peak_temperature, anemoi_parameter_ID = results # 0.00, 0.00 # 
+            # GPU_peak_temperature_list.append(GPU_peak_temperature)
+            # HBM_peak_temperature_list.append(HBM_peak_temperature)
+            # GPU_min_peak_temperature_list.append(GPU_min_peak_temperature)
+            # HBM_min_peak_temperature_list.append(HBM_min_peak_temperature)
+        
+    # print(f"GPU_power_list: {GPU_power_list}")
+    # print(f"GPU_peak_temperatures: {GPU_peak_temperature_list}")
+    # print(f"HBM_peak_temperatures: {HBM_peak_temperature_list}")
+    # print(f"GPU_min_peak_temperatures: {GPU_min_peak_temperature_list}")
+    # print(f"HBM_min_peak_temperatures: {HBM_min_peak_temperature_list}")
+
+    # with open('dray_temperature_dict_2p5D_waferscale.txt', 'w') as f:
+    #     f.write(f"temperature_dict: {temperature_dict}")
+    f.close()
+    return
+    # dedeepyo : 19-Jun-2025
 
     # dedeepyo : 4-Jun-25 : Implementing iterations with thermal and performance.
     current_GPU_peak_temperature = GPU_peak_temperature
@@ -1408,7 +1836,7 @@ def therm(therm_conf, heatsink_conf, bonding_conf, heatsink, out_dir, simtype = 
         old_HBM_min_peak_temperature = current_HBM_min_peak_temperature
         power_dict["Power_Source"] = update_power_source_backside(boxes, power_dict) # power in W
 
-        results = simulator.simulate(boxes, bonding_box_list, TIM_boxes, heatsink_obj = heatsink_obj, heatsink_list = heatsink_list, heatsink_name = heatsink_name, bonding_list = bonding_list, bonding_name_type_dict = bonding_name_type_dict, is_repeat = True,  min_TIM_height = min_TIM_height, power_dict = power_dict, anemoi_parameter_ID = anemoi_parameter_ID)
+        results = simulator.simulate(boxes, bonding_box_list, TIM_boxes, heatsink_obj = heatsink_obj, heatsink_list = heatsink_list, heatsink_name = heatsink_name, bonding_list = bonding_list, bonding_name_type_dict = bonding_name_type_dict, is_repeat = is_repeat,  min_TIM_height = min_TIM_height, power_dict = power_dict, anemoi_parameter_ID = anemoi_parameter_ID, layers = layers)
         GPU_peak_temperature, HBM_peak_temperature, GPU_min_peak_temperature, HBM_min_peak_temperature, anemoi_parameter_ID = results # 0.00, 0.00 # 
         GPU_peak_temperature_list.append(GPU_peak_temperature)
         HBM_peak_temperature_list.append(HBM_peak_temperature)
@@ -1476,12 +1904,24 @@ def GPU_throttling(GPU_power = 275, GPU_time_frac_idle = 0.2, GPU_idle_power = 4
   GPU_power_throttled = GPU_power * (1 - GPU_time_frac_idle) + GPU_idle_power * GPU_time_frac_idle
   return GPU_power_throttled
 
+# def HBM_throttled_performance(bandwidth, latency, HBM_peak_temperature = 74):
+#     if((HBM_peak_temperature > 85)):
+#         bandwidth *= 0.732
+#         latency *= 1.714
+#     elif((HBM_peak_temperature > 75) and (HBM_peak_temperature <= 85)):
+#         bandwidth *= 0.912
+#         latency *= 1.238
+    
+#     return bandwidth, latency
+
 def HBM_throttled_performance(bandwidth, latency, HBM_peak_temperature = 74):
+    if((HBM_peak_temperature > 74)):
+        bandwidth *= (2.82 - 0.018 * HBM_peak_temperature) # Linear interpolation between (75, 0.912) and (85, 0.732)
     if((HBM_peak_temperature > 85)):
-        bandwidth *= 0.732
+        # bandwidth *= 0.732
         latency *= 1.714
     elif((HBM_peak_temperature > 75) and (HBM_peak_temperature <= 85)):
-        bandwidth *= 0.912
+        # bandwidth *= 0.912
         latency *= 1.238
     
     return bandwidth, latency
@@ -1531,6 +1971,207 @@ def initialize_power_dict_values(boxes):
     return power_dict
 
 # dedeepyo : 4-Jun-25
+
+def read_data(filename):
+    data = []
+    with open(filename, 'r') as f:
+        for line in f:
+            if line.strip():
+                parts = line.strip().split()
+                if len(parts) == 4:
+                    data.append([float(x) for x in parts])
+    return np.array(data)
+
+def interpolate_and_report(data, col2_values, file_handle, system_name, HTC, TIM_conductivity, infill_conductivity, underfill_conductivity, HBM_stack_height, dummy_Si):
+    slope_intercept_dict = {}
+    for val in col2_values:
+        slope_intercept_dict[val] = {'peak_GPU_temp': (0.0, 0.0), 'peak_HBM_temp': (0.0, 0.0)}
+        mask = np.isclose(data[:,1], val)
+        subset = data[mask]
+        if subset.shape[0] < 2:
+            continue  # Need at least 2 points for regression
+        x = subset[:,0].reshape(-1, 1)
+        for col_idx, col_name in zip([2,3], ['peak_GPU_temp', 'peak_HBM_temp']):
+            y = subset[:,col_idx]
+            model = LinearRegression()
+            model.fit(x, y)
+            y_pred = model.predict(x)
+            r2 = r2_score(y, y_pred)
+            slope_intercept_dict[val][col_name] = (f"{model.coef_[0]:.3f}", f"{model.intercept_:.2f}")
+            # file_handle.write(f"Interpolation for col={val}, {col_name}:")
+            # file_handle.write(f"  Slope: {model.coef_[0]:.6f}, Intercept: {model.intercept_:.6f}, R^2: {r2:.6f}\n")
+
+    # "system_name,HBM_power(W),HTC(W/(m2K)),TIM_conductivity(W/(mK)),infill_conductivity(W/(mK)),underfill_conductivity(W/(mK)),HBM_stack_height,dummy_Si"
+
+    for key1 in slope_intercept_dict:
+        file_handle.write(f"{system_name},{key1},{HTC},{TIM_conductivity},{infill_conductivity},{underfill_conductivity},{HBM_stack_height},{dummy_Si},{slope_intercept_dict[key1]['peak_GPU_temp'][0]},{slope_intercept_dict[key1]['peak_GPU_temp'][1]},{slope_intercept_dict[key1]['peak_HBM_temp'][0]},{slope_intercept_dict[key1]['peak_HBM_temp'][1]}\n")
+    #     # print(f"{slope_intercept_dict[key1]['peak_GPU_temp'][0]}, {slope_intercept_dict[key1]['peak_HBM_temp'][0]}")
+    #     # print(f"{slope_intercept_dict[key1]['peak_GPU_temp'][1]}, {slope_intercept_dict[key1]['peak_HBM_temp'][1]}")
+    #     # print("calibrate_GPU")
+    #     file_handle.write(f"calibrate_GPU :: {key1} : ({slope_intercept_dict[key1]['peak_GPU_temp'][0]}, {slope_intercept_dict[key1]['peak_GPU_temp'][1]})\n")
+    #     # print("calibrate_HBM")
+    #     file_handle.write(f"calibrate_HBM :: {key1} : ({slope_intercept_dict[key1]['peak_HBM_temp'][0]}, {slope_intercept_dict[key1]['peak_HBM_temp'][1]})\n")
+
+def write_calibration_to_csv(
+    system_name,
+    HBM_power,
+    HTC,
+    TIM_cond,
+    infill_cond,
+    underfill_cond,
+    HBM_stack_height,
+    dummy_Si,
+    calibrate_GPU_slope,
+    calibrate_GPU_intercept,
+    calibrate_HBM_slope,
+    calibrate_HBM_intercept,
+    csv_file_path="calibration_data.csv"
+):
+    """
+    Write calibration data to CSV file.
+    
+    Args:
+        system_name: Name of the system (e.g., "2p5D_1GPU")
+        HBM_power: HBM power in Watts
+        HTC: Heat Transfer Coefficient in W/(m^2*K)
+        TIM_cond: TIM conductivity in W/(m*K)
+        infill_cond: Infill conductivity in W/(m*K)
+        underfill_cond: Underfill conductivity in W/(m*K)
+        HBM_stack_height: HBM stack height (number of dies)
+        dummy_Si: Boolean indicating if dummy Si is present
+        calibrate_GPU_slope: GPU calibration slope
+        calibrate_GPU_intercept: GPU calibration intercept
+        calibrate_HBM_slope: HBM calibration slope
+        calibrate_HBM_intercept: HBM calibration intercept
+        csv_file_path: Path to the CSV file (default: "calibration_data.csv")
+    """
+    # Ensure dummy_Si is a boolean and convert to string for CSV
+    dummy_Si_str = str(bool(dummy_Si))
+    
+    # Prepare the row data
+    row_data = [
+        system_name,
+        str(HBM_power),
+        str(HTC),
+        str(TIM_cond),
+        str(infill_cond),
+        str(underfill_cond),
+        str(HBM_stack_height),
+        dummy_Si_str,
+        str(calibrate_GPU_slope),
+        str(calibrate_GPU_intercept),
+        str(calibrate_HBM_slope),
+        str(calibrate_HBM_intercept)
+    ]
+    
+    # Check if file exists to determine if we need to write header
+    file_exists = os.path.exists(csv_file_path)
+    
+    # Open file in append mode
+    with open(csv_file_path, 'a', newline='') as csvfile:
+        writer = csv.writer(csvfile)
+        
+        # Write header if file doesn't exist
+        if not file_exists:
+            header = [
+                "system_name",
+                "HBM_power(W)",
+                "HTC(W/(m2K))",
+                "TIM_conductivity(W/(mK))",
+                "infill_conductivity(W/(mK))",
+                "underfill_conductivity(W/(mK))",
+                "HBM_stack_height",
+                "dummy_Si",
+                "calibrate_GPU_slope",
+                "calibrate_GPU_intercept",
+                "calibrate_HBM_slope",
+                "calibrate_HBM_intercept"
+            ]
+            writer.writerow(header)
+        
+        # Write the data row
+        writer.writerow(row_data)
+
+def parse_calibration_block(block: str) -> Tuple[str, List[Tuple[str, str]], List[Tuple[str, str]]]:
+    """Extract condition line and calibration tuples for GPU and HBM from a text block."""
+    lines = [line.strip() for line in block.splitlines() if line.strip()]
+    if not lines:
+        raise ValueError("Empty calibration block encountered")
+
+    condition_with_suffix = lines[0]
+    colon_index = condition_with_suffix.find(":")
+    if colon_index == -1:
+        raise ValueError(f"Condition line missing ':' separator: {condition_with_suffix!r}")
+    condition_line = condition_with_suffix[: colon_index + 1]
+
+    gpu_entries: List[Tuple[str, str]] = []
+    hbm_entries: List[Tuple[str, str]] = []
+    entry_pattern = re.compile(r"calibrate_(GPU|HBM) :: ([^:]+) : \(([^)]+)\)")
+
+    for line in lines[1:]:
+        match = entry_pattern.search(line)
+        if not match:
+            continue
+        target, setpoint, values = match.groups()
+        if target.upper() == "GPU":
+            gpu_entries.append((setpoint.strip(), values.strip()))
+        else:
+            hbm_entries.append((setpoint.strip(), values.strip()))
+
+    if not gpu_entries and not hbm_entries:
+        raise ValueError(f"No calibration entries found for block starting: {condition_line}")
+
+    return condition_line, gpu_entries, hbm_entries
+
+def format_condition_block(condition: str, entries: List[Tuple[str, str]]) -> List[str]:
+    """Render a condition block without a calibrate header."""
+    if not entries:
+        return []
+
+    # output = [condition, '    temperature_dict["2p5D_1GPU"] = {']
+    output = [condition, '    temperature_dict["3D_1GPU"] = {']
+    for index, (setpoint, values) in enumerate(entries):
+        trailing = "," if index < len(entries) - 1 else ""
+        output.append(f"        {setpoint} : ({values}){trailing}")
+    output.append("    }")
+    output.append("")
+    return output
+
+def convert(source: Path, destination: Path, hbm_stack_height = 1) -> None:
+    raw_text = source.read_text()
+    blocks = [block.strip() for block in raw_text.split("\n\n") if block.strip()]
+
+    gpu_sections: List[List[str]] = []
+    hbm_sections: List[List[str]] = []
+
+    for block in blocks:
+        condition, gpu_entries, hbm_entries = parse_calibration_block(block)
+        gpu_block = format_condition_block(condition, gpu_entries)
+        if gpu_block:
+            gpu_sections.append(gpu_block)
+        hbm_block = format_condition_block(condition, hbm_entries)
+        if hbm_block:
+            hbm_sections.append(hbm_block)
+
+    output_lines: List[str] = []
+    output_lines.append("hbm_stack_height = {}".format(hbm_stack_height))
+
+    if gpu_sections:
+        output_lines.append("calibrate_GPU")
+        for block in gpu_sections:
+            output_lines.extend(block)
+
+    if hbm_sections:
+        if output_lines and output_lines[-1] != "":
+            output_lines.append("")
+        output_lines.append("calibrate_HBM")
+        for block in hbm_sections:
+            output_lines.extend(block)
+
+    while output_lines and output_lines[-1] == "":
+        output_lines.pop()
+
+    destination.write_text("\n".join(output_lines) + "\n")
 
 if __name__ == '__main__':
     therm()

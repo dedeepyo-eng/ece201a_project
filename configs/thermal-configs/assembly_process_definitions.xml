@@ -217,7 +217,7 @@
         bonding_technician_yearly_cost="100000"
         bonding_time="20"
         bonding_group="1"
-        die_separation="0.100"
+        die_separation="0.200"
         edge_exclusion="0.100"
         max_pad_current_density="10000.0"
         bonding_pitch="0.010"
@@ -286,6 +286,29 @@
         bonding_pitch="1.0"
         alignment_yield="1.0"
         bonding_yield="1.0"
+        dielectric_bond_defect_density="0.0">
+    </assembly>
+    <assembly name="silicon_individual_bonding_orig" 
+        materials_cost_per_mm2="0.1"
+        bb_cost_per_second=""
+        picknplace_machine_cost="1800000"
+        picknplace_machine_lifetime="5"
+        picknplace_machine_uptime="0.9"
+        picknplace_technician_yearly_cost="100000"
+        picknplace_time="10"
+        picknplace_group="1"
+        bonding_machine_cost="1800000"
+        bonding_machine_lifetime="5"
+        bonding_machine_uptime="0.9"
+        bonding_technician_yearly_cost="100000"
+        bonding_time="20"
+        bonding_group="1"
+        die_separation="0.100"
+        edge_exclusion="0.100"
+        max_pad_current_density="10000.0"
+        bonding_pitch="0.010"
+        alignment_yield="0.999"
+        bonding_yield="0.999999"
         dielectric_bond_defect_density="0.0">
     </assembly>
 </assembly_processes>
